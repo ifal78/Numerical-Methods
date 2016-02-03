@@ -4,9 +4,11 @@
 %%% Juan Igancio Vizcaino
 %------------------------------------------------------------
 
+clear all
+
 % 1) Define Global Variables 
 
-global delta alpha A rho_z sigma_e mu b kappa beta;
+global delta alpha A rho_z sigma_e mu b kappa beta N;
 delta   = 0.0081; %Separation rate
 alpha   = 0.72;   %Elasticity of matching
 A       = 0.158;  %Matching efficiency
@@ -16,30 +18,43 @@ mu      = 0.72;   %Bargaining weight for workers
 b       = 0.4;    %Unemployment utility (flow)
 kappa   = 0.6;    %Real posting cost
 beta    = 0.999;  %Discount factor (weekly)
- 
+N       = 30;     %Number of elements in shock grid
 %-------------------------------------------------------------
 
-% 2) Generate the Matching Function on an indidvidual script (matching_function.m)
-
-% 3) Generate Stochastic Transition Matrix (high rho -> use Rouwenhorst?s method) 
-
-% 3.1) Generate a shock grid
-N          = 30;
-vega       = sqrt((N-1)/(1-rho_z^2))*sigma_e;  %generate grid limits to match unconditional variance
-spacing    = (2*vega)/(N-1);
+% 2) Generate Stochastic Transition Matrix (high rho -> use Rouwenhorst's method) 
+% 2.1) Generate a shock grid
+vega       = sqrt((N-1)/(1-rho_z^2))*sigma_e;  
+spacing    = (2*vega)/(N-1);        %Create grid limits to match unconditional variance
 z          = -vega:spacing:vega;
+z          = transpose(z);
 
-% 3.2) Generate the matrix recursively
+% 2.2) Generate the matrix recursively
 p          = (1+rho_z)/2;
-q          = p;
-PI       = [p 1-p ;1-q q];
+q          =  p;
+PI         = [p 1-p ;1-q q];
 
 for j=3:N,
-zero = zeros(j-1,1);
-PI = p*[PI zero; transpose(zero) 0]+(1-p)*[zero PI; 0 transpose(zero)]+(1-q)*[transpose(zero) 0;PI zero]+q*[0 transpose(zero) ;zero PI];
-PI=0.5*PI;
+zero        = zeros(j-1,1);
+PI          = p*[PI zero; transpose(zero) 0]+(1-p)*[zero PI; 0 transpose(zero)]+(1-q)*[transpose(zero) 0;PI zero]+q*[0 transpose(zero) ;zero PI];
+PI(2:j-1,:) = PI(2:j-1,:)*0.5;
+%To create a srochastic matrix, it's important to divide all the rows but the TOP AND THE BOTTOM by 2 
 end
 
-% Let's sum each of the rows to check if the matrix is stochastic and evrything is ok       
-sum(transpose(PI))
-%There's something wrong wiht it :(
+% 2.4) Check if the matrix is stochastic
+check=sum(transpose(PI));
+
+% 2.5) Clean up the workspace
+clear zero
+clear j
+clear check
+
+% 3.3)   Generate the system of equations to solve
+% 3.3.1) Create the system of equations on a different script
+% 3.3.2) Solve the system of non-linear equations by minimizing the rhs
+    
+theta0              = zeros(N,1);
+optimoptions(@fsolve);
+options.TolX        = 0.001;
+options.TolFun      = 0.001;
+options.MaxIter     = 2000;
+[theta_star,fval]   = system (kappa,beta,A,alpha,PI,mu,z,b,delta,theta0);
