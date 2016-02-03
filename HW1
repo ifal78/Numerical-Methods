@@ -50,6 +50,17 @@ clear check
 
 % 3.3)   Generate the system of equations to solve
 % 3.3.1) Create the system of equations on a different script
+
+function    [sol,fval] = system (kappa,beta,A,alpha,PI,mu,z,b,delta,x0)
+            [sol,fval] = fsolve (@residual,x0);
+           
+        function sol = residual(theta)
+                 sol = (kappa/(beta*A)).*(theta.^alpha)-PI*((1-mu).*(z-b)-(kappa*mu).*(theta)+(((1-delta)*kappa)/A).*(theta.^alpha));
+                 sol = log(sol);
+        end
+            
+end
+
 % 3.3.2) Solve the system of non-linear equations by minimizing the rhs
     
 theta0              = zeros(N,1);
