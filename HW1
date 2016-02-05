@@ -18,7 +18,7 @@ mu      = 0.72;   %Bargaining weight for workers
 b       = 0.4;    %Unemployment utility (flow)
 kappa   = 0.6;    %Real posting cost
 beta    = 0.999;  %Discount factor (weekly)
-N       = 30;     %Number of elements in shock grid
+N       = 50;     %Number of elements in shock grid
 %-------------------------------------------------------------
 
 % 2) Generate Stochastic Transition Matrix (high rho -> use Rouwenhorst's method) 
@@ -48,24 +48,18 @@ clear zero
 clear j
 clear check
 
-% 3.3)   Generate the system of equations to solve
-% 3.3.1) Create the system of equations on a different script
-
-function    [sol,fval] = system (kappa,beta,A,alpha,PI,mu,z,b,delta,x0)
-            [sol,fval] = fsolve (@residual,x0);
-           
-        function sol = residual(theta)
-                 sol = (kappa/(beta*A)).*(theta.^alpha)-PI*((1-mu).*(z-b)-(kappa*mu).*(theta)+(((1-delta)*kappa)/A).*(theta.^alpha));
-                 sol = log(sol);
-        end
-            
-end
-
-% 3.3.2) Solve the system of non-linear equations by minimizing the rhs
+% 3.1)   Generate the system of equations to solve (on a separate script)
+% 3.2)   Solve the system of non-linear equations by minimizing the rhs
     
 theta0              = zeros(N,1);
 optimoptions(@fsolve);
-options.TolX        = 0.001;
-options.TolFun      = 0.001;
+options.TolX        = 0.0001;
+options.TolFun      = 0.0001;
 options.MaxIter     = 2000;
 [theta_star,fval]   = system (kappa,beta,A,alpha,PI,mu,z,b,delta,theta0);
+
+% 3.2.1) Apply anti-log to get true theta
+theta_star         = exp(theta_star);
+% 3.2.2) Check if vacancy yield is <1 for all theta and correct it if not 
+q_theta            = A*(theta_star.^(-alpha));
+q_theta(q_theta>1) %Not binding, don't need to correct anything!
