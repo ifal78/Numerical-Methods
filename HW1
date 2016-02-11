@@ -8,27 +8,28 @@ clear all
 
 % 1) Define Global Variables 
 
-global delta alpha A rho_z sigma_e mu b kappa beta N;
-delta   = 0.0081; %Separation rate
-alpha   = 0.72;   %Elasticity of matching
-A       = 0.158;  %Matching efficiency
-rho_z   = 0.9895; %Autocorrelation of productivity (weekly)
-sigma_e = 0.0034; %Standard deviation of innovations
-mu      = 0.72;   %Bargaining weight for workers
-b       = 0.4;    %Unemployment utility (flow)
-kappa   = 0.6;    %Real posting cost
-beta    = 0.999;  %Discount factor (weekly)
-N       = 30;     %Number of elements in shock grid
+global delta alpha A rho_z sigma_e mu b kappa beta N T;
+delta   = 0.0081;  %Separation rate
+alpha   = 0.72;    %Elasticity of matching
+A       = 0.158;   %Matching efficiency
+rho_z   = 0.9895;  %Autocorrelation of productivity (weekly)
+sigma_e = 0.0034;  %Standard deviation of innovations
+mu      = 0.05;    %Bargaining weight for workers
+b       = 0.95;    %Unemployment utility (flow)
+kappa   = 0.6;     %Real posting cost
+beta    = 0.999;   %Discount factor (weekly)
+N       = 50;      %Number of elements in shock grid
+T       = 10000;   %Number of simulations
 %-------------------------------------------------------------
 
 % 2) Generate Stochastic Transition Matrix (high rho -> use Rouwenhorst's method) 
 % 2.1) Generate a shock grid
-vega       = sqrt((N-1)/(1-rho_z^2))*sigma_e;  
-spacing    = (2*vega)/(N-1);        %Create grid limits to match unconditional variance
-z          = -vega:spacing:vega;
+vega       = sigma_e*sqrt((N-1)/(1-rho_z^2));  
+% 2.2) Create grid limits to match unconditional variance
+spacing    = ((2*vega)/(N-1));       
+z          = 1-vega:spacing:1+vega;
 z          = transpose(z);
-
-% 2.2) Generate the matrix recursively
+% 2.3) Generate the matrix recursively
 p          = (1+rho_z)/2;
 q          =  p;
 PI         = [p 1-p ;1-q q];
@@ -37,24 +38,131 @@ for j=3:N,
 zero        = zeros(j-1,1);
 PI          = p*[PI zero; transpose(zero) 0]+(1-p)*[zero PI; 0 transpose(zero)]+(1-q)*[transpose(zero) 0;PI zero]+q*[0 transpose(zero) ;zero PI];
 PI(2:j-1,:) = PI(2:j-1,:)*0.5;
-%To create a srochastic matrix, it's important to divide all the rows but the TOP AND THE BOTTOM by 2 
+%To create a stochastic matrix, it's important to divide all the rows but the TOP AND THE BOTTOM by 2 
 end
 
 % 2.4) Check if the matrix is stochastic
-check=sum(transpose(PI));
+check       = sum(transpose(PI));
+ 
+% 3)     Find the endogenous variables
+% 3.1)   Generate the system of equations to solve (on a separate script)
 
-% 2.5) Clean up the workspace
-clear zero
-clear j
-clear check
+function    [sol,fval] = system (kappa,beta,A,alpha,PI,mu,z,b,delta,x0)
+            [sol,fval] = fsolve (@residual,x0);
+           
+        function sol = residual(theta)
+                 sol = (kappa/(beta*A)).*(theta.^alpha)-PI*((1-mu).*(z-b)-(kappa*mu).*(theta)+(((1-delta)*kappa)/A).*(theta.^alpha));
+               
+        end
+            
+end
 
-% 3.3)   Generate the system of equations to solve
-% 3.3.1) Create the system of equations on a different script
-% 3.3.2) Solve the system of non-linear equations by minimizing the rhs
+
+% 3.2)   Solve the system of non-linear equations by minimizing the rhs
     
-theta0              = zeros(N,1);
+theta0              = ones(N,1);
 optimoptions(@fsolve);
 options.TolX        = 0.001;
 options.TolFun      = 0.001;
 options.MaxIter     = 2000;
 [theta_star,fval]   = system (kappa,beta,A,alpha,PI,mu,z,b,delta,theta0);
+
+% 3.2.1) Check if vacancy yield is <1 for all theta and correct it if not 
+theta_min           = (1/A)^(-(1/alpha));
+theta_star (theta_star <= theta_min) = theta_min;
+
+% 4)     Simulate the endogenous variables
+% 4.1)   Generate the unconditional transition matrix and it's
+% corresponding cummulative matrix
+PI_unc          = PI^10000;
+PI_unc          = PI_unc(1,:);
+PI_unc_cum      = cumsum(PI_unc);
+
+index           = zeros(T,1);
+theta_gen       = zeros(T,1);
+
+% 4.2)   Fix the random sample using a seed
+rng(2004);
+u               = unifrnd(0,1,[T,1]);
+index(1,:)      = find(u(1,1)< PI_unc_cum,1);
+z_gen           = z(index(1,1),:);
+theta_gen       = theta_star(index(1,1),:);
+
+% 4.3)  Now that I have the initial shock I can generate the subsequent
+% realizations using the conditional matrix
+PI_cum          = cumsum(PI,2);
+
+for l=2:T,
+    index(l,1)      =  find(u(l,1) < PI_cum(index(l-1,1),:),1);
+    z_gen(l,1)      =  z(index(l,1),:);
+    theta_gen(l,1)  =  theta_star(index(l,1),:);
+end
+    
+% 4.3.1) Estimate an AR(1) model for z_gen to check if the simulated process follows DGP specified 
+Mdl    = arima(1,0,0);
+EstMdl = estimate(Mdl,z_gen); 
+%Rho is pretty close, looks good!
+
+% 5) Genrerate the remaining endogenous variables
+q             =  A*(theta_gen.^(-alpha));
+p             =  theta_gen.*q;
+unemployment  =  delta./(delta+theta_gen.*q);
+exp_duration  =  1./q;
+wage          =  mu.*z_gen + (1-mu)*b+ (mu*kappa).*theta_gen;
+
+%6 ) Plot the endogenous variables
+subplot(3,3,1)       
+plot(z_gen);
+    hline = refline([0 mean(z_gen)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Productivity')
+
+subplot(3,3,2)       
+plot(theta_gen);
+    hline = refline([0 mean(theta_gen)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Labor Market Tightness')
+
+subplot(3,3,3)       
+plot(wage);
+    hline = refline([0 mean(wage)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Wage')
+    
+subplot(3,3,4)       
+plot(unemployment);
+    hline = refline([0 mean(unemployment)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Unemployment Rate')
+
+subplot(3,3,5)       
+plot(exp_duration);
+    hline = refline([0 mean(exp_duration)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Expected Unemployment Duration')   
+
+subplot(3,3,6)       
+plot(q);
+    hline = refline([0 mean(q)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Prob of filling a vacancy')
+
+subplot(3,3,7)       
+plot(p);
+    hline = refline([0 mean(p)]);
+    hline.Color = 'r';
+    hline.LineStyle = '--';
+    hline.LineWidth = 1;
+    title('Prob of finding a job') 
